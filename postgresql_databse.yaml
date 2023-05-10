@@ -28,30 +28,6 @@ Parameters:
     MaxLength: '64'
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
-  OracleDBName: # Initial database name for the Oracle instance
-    Default: db1
-    Description: The database name
-    Type: String
-    MinLength: '1'
-    MaxLength: '64'
-    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
-    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
-  OracleDBUser: # Initial database user for the Oracle instance
-    Description: The database admin account username
-    Type: String
-    MinLength: '1'
-    MaxLength: '16'
-    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
-    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
-    Default: 'oracleuser'
-  OracleDBPassword: # Initial user password for the Oracle instance
-    NoEcho: 'true'
-    Description: The database admin account password
-    Type: String
-    MinLength: '8'
-    MaxLength: '41'
-    AllowedPattern: '[a-zA-Z0-9]*'
-    ConstraintDescription: must contain only alphanumeric characters.
   PostgresDBName: # Initial database name for the PostgreSQL instance
     Default: db1
     Description: The database name
@@ -107,8 +83,9 @@ Resources:
                 Action:
                   - s3:ListAllMyBuckets
                 Resource: '*'
-  ## Key pair - Key pair for the EC2 instances
 
+
+  ## Key pair - Key pair for the EC2 instances
   KeyName:
     Type: 'AWS::EC2::KeyPair'
     Properties:
@@ -181,23 +158,6 @@ Resources:
   
   ## Elastic Load Balancer
   ElasticLoadBalancerPostgres:
-    Type: AWS::ElasticLoadBalancing::LoadBalancer
-    DependsOn: AttachGateway
-    Properties:
-      Subnets: [!Ref 'AppTierPubSubnet1', !Ref 'AppTierPubSubnet2']
-      SecurityGroups: [!Ref 'InstanceSecurityGroup']
-      CrossZone: 'true'
-      Listeners:
-      - LoadBalancerPort: '80'
-        InstancePort: '80'
-        Protocol: HTTP
-      HealthCheck:
-        Target: HTTP:80/
-        HealthyThreshold: '3'
-        UnhealthyThreshold: '5'
-        Interval: '30'
-        Timeout: '5'
-  ElasticLoadBalancerOracle:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
     DependsOn: AttachGateway
     Properties:
@@ -306,10 +266,6 @@ Resources:
           ToPort: 5439
           CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
-          FromPort: 1521 # Oracle
-          ToPort: 1521
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
           FromPort: 22 # SSH
           ToPort: 22
           CidrIp: 0.0.0.0/0
@@ -333,43 +289,6 @@ Resources:
       Tags:
         - Key: Name
           Value: Public-DB-Subnet-Group
-
-  ## Oracle RDS - Create an Oracle RDS database.
-  OraclePrimaryDB:
-    Type: AWS::RDS::DBInstance
-    DependsOn: AttachGateway
-    Properties:
-      VPCSecurityGroups:
-        - Ref: InstanceSecurityGroup # Associate it with the security group with inbound rules to allow communication from outside the VPC.
-      DBSubnetGroupName: !Ref PublicDBSubnetGroup # Associate it with the public subnet group.
-      AllocatedStorage: '20'
-      DBInstanceClass: db.t3.medium
-      Engine: oracle-ee # Database type
-      DBName: !Ref OracleDBName # Initial database name
-      LicenseModel: bring-your-own-license # Oracle license
-      MasterUsername: !Ref OracleDBUser # Initial database user
-      MasterUserPassword: !Ref OracleDBPassword # Initial database user's password
-      PubliclyAccessible: true # Need to enable this to be able to connect from a local computer.
-      AvailabilityZone: us-east-1a
-      Tags:
-        - Key: Name
-          Value: !Sub ${NamePrefix}-Oracle-Primary-DB
-    DeletionPolicy: Delete # We won't store backups
-  OracleStandbyDB:
-    Type: AWS::RDS::DBInstance
-    DependsOn: AttachGateway
-    Properties:
-      VPCSecurityGroups:
-        - Ref: InstanceSecurityGroup
-      SourceDBInstanceIdentifier: !Ref 'OraclePrimaryDB'
-      DBInstanceClass: db.t3.medium
-      PubliclyAccessible: true
-      AvailabilityZone: us-east-1b
-      ReplicaMode: open-read-only
-      Tags:
-      - Key: Name
-        Value: !Sub ${NamePrefix}-Oracle-Standby-DB
-    DeletionPolicy: Delete
 
 # PostgreSQL RDS - Similar configuration to the Oracle RDS.
   PostgresPrimaryDB:
@@ -451,24 +370,6 @@ Resources:
         - Key: Name
           PropagateAtLaunch: 'true'
           Value: !Sub ${NamePrefix}-Postgres-Autoscaling-Group
-
-  AutoScalingGroupOracle:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Properties:
-      MinSize: '1'
-      MaxSize: '2'
-      DesiredCapacity: '1'
-      LoadBalancerNames: [!Ref 'ElasticLoadBalancerOracle']
-      LaunchTemplate:
-        LaunchTemplateId: !Ref LaunchTemplate
-        Version: 1
-      VPCZoneIdentifier:
-        - !Ref AppTierPubSubnet1
-        - !Ref AppTierPubSubnet2
-      Tags:
-        - Key: Name
-          PropagateAtLaunch: 'true'
-          Value: !Sub ${NamePrefix}-Oracle-Autoscaling-Group
   
   # S3 Buckets - Create S3 buckets
   S3TextIndexes:
@@ -504,6 +405,7 @@ Resources:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
       VpcId: !Ref VPC
 
+
 ######################
 # Outputs section
 # This section contains values that will show up in the Outputs tab in the management console. They allow a convenient way to view information 
@@ -517,18 +419,6 @@ Outputs:
     Value: !Ref VPC
     Export:
       Name: !Sub ${AWS::StackName}-VPCID
-
-  OracleDatabaseEndpoint: # Show the endpoint for the Oracle database
-    Description: "Connection endpoint for the Oracle database"
-    Value: !GetAtt OraclePrimaryDB.Endpoint.Address
-    Export:
-      Name: !Sub ${AWS::StackName}-OracleDatabaseEndpoint
-
-  OracleStandbyDatabaseEndpoint: # Show the endpoint for the Oracle standby database
-    Description: "Connection endpoint for the Oracle standby database"
-    Value: !GetAtt OracleStandbyDB.Endpoint.Address
-    Export:
-      Name: !Sub ${AWS::StackName}-OracleStandbyDatabaseEndpoint
 
   PostgresDatabaseEndpoint: # Show the endpoint for the PostgreSQL database
     Description: "Connection endpoint for the PostgreSQL database"
@@ -547,9 +437,3 @@ Outputs:
     Value: !GetAtt ElasticLoadBalancerPostgres.DNSName
     Export:
       Name: !Sub ${AWS::StackName}-PostgresELBPublicDNS
-
-  OracleELBPublicDNS:
-    Description: DNS address of the Oracle Application Load Balancer
-    Value: !GetAtt ElasticLoadBalancerOracle.DNSName
-    Export:
-      Name: !Sub ${AWS::StackName}-OracleELBPublicDNS
